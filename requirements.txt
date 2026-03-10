@@ -1,0 +1,8 @@
+# Price Tracker — Python dependencies
+# Pin major versions to ensure reproducible runs in GitHub Actions.
+
+# HTTP client for SerpAPI calls
+requests>=2.31,<3
+
+# Official Anthropic Python SDK (Claude API)
+anthropic>=0.26,<1

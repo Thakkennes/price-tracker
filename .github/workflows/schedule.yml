@@ -1,0 +1,53 @@
+name: Price Tracker
+
+on:
+  # Run twice a day — 9:00 UTC and 18:00 UTC
+  schedule:
+    - cron: "0 9 * * *"
+    - cron: "0 18 * * *"
+  # Allow manual runs from the GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  check-prices:
+    runs-on: ubuntu-latest
+
+    # Required to push price_history.csv back to the repo
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run price checker
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python checker.py
+
+      # Commit the updated price history back to the repo.
+      # [skip ci] prevents this commit from triggering another workflow run.
+      - name: Commit price history
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add price_history.csv
+          # Only commit if there is something new to commit
+          if git diff --cached --quiet; then
+            echo "No changes to price_history.csv — nothing to commit."
+          else
+            git commit -m "chore: update price_history.csv [skip ci]"
+            git push
+          fi
