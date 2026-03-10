@@ -22,7 +22,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
 import requests
 
 # ---------------------------------------------------------------------------
@@ -46,8 +46,9 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
-# Gemini model to use for product verification (free tier supports this model)
-GEMINI_MODEL = "gemini-2.0-flash"
+# Gemini model to use for product verification.
+# gemini-1.5-flash has a free tier quota of 1,500 requests/day.
+GEMINI_MODEL = "gemini-1.5-flash"
 
 # Number of SerpAPI results to fetch per product
 SERPAPI_NUM_RESULTS = 10
@@ -162,12 +163,15 @@ def verify_with_gemini(
         results_json=json.dumps(serpapi_results, indent=2),
     )
 
-    model = genai.GenerativeModel(GEMINI_MODEL)
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
     for attempt in range(1, 3):  # up to 2 attempts
         log.info(f"[Gemini] Verifying matches (attempt {attempt})")
         try:
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
             raw = response.text.strip()
             # Strip markdown code fences if Gemini wraps the JSON anyway
             if raw.startswith("```"):
@@ -278,7 +282,6 @@ def run() -> None:
         products = json.load(f)
     log.info(f"Loaded {len(products)} product(s) from {PRODUCTS_FILE}")
 
-    genai.configure(api_key=GEMINI_API_KEY)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for product in products:
