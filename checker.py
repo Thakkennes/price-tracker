@@ -1,12 +1,12 @@
 """
 Price Tracker — checker.py
 ==========================
-Monitors products defined in products.json, verifies matches via Claude,
+Monitors products defined in products.json, verifies matches via Gemini,
 and sends email alerts when prices fall below user-defined thresholds.
 
 Environment variables required:
   SERPAPI_KEY         — SerpAPI key for Google Shopping searches
-  ANTHROPIC_API_KEY   — Anthropic API key for Claude verification
+  GEMINI_API_KEY      — Google Gemini API key (free tier available)
   GMAIL_ADDRESS       — Gmail address used to send alert emails
   GMAIL_APP_PASSWORD  — Gmail App Password (not your account password)
 """
@@ -22,7 +22,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-import anthropic
+import google.generativeai as genai
 import requests
 
 # ---------------------------------------------------------------------------
@@ -42,12 +42,12 @@ HISTORY_COLUMNS = [
 ]
 
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
-# Claude model to use for product verification
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+# Gemini model to use for product verification (free tier supports this model)
+GEMINI_MODEL = "gemini-2.0-flash"
 
 # Number of SerpAPI results to fetch per product
 SERPAPI_NUM_RESULTS = 10
@@ -114,7 +114,7 @@ def fetch_shopping_results(product_name: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Verify matches using Claude
+# Step 2 — Verify matches using Gemini
 # ---------------------------------------------------------------------------
 
 VERIFICATION_PROMPT = """\
@@ -148,13 +148,12 @@ Respond with ONLY the JSON array. No explanation, no markdown fences.
 """
 
 
-def verify_with_claude(
+def verify_with_gemini(
     product: dict,
     serpapi_results: list[dict],
-    client: anthropic.Anthropic,
 ) -> list[dict]:
     """
-    Send SerpAPI results to Claude and return a list of verified product matches.
+    Send SerpAPI results to Gemini and return a list of verified product matches.
     Retries once on malformed JSON before giving up.
     """
     prompt = VERIFICATION_PROMPT.format(
@@ -163,16 +162,14 @@ def verify_with_claude(
         results_json=json.dumps(serpapi_results, indent=2),
     )
 
+    model = genai.GenerativeModel(GEMINI_MODEL)
+
     for attempt in range(1, 3):  # up to 2 attempts
-        log.info(f"[Claude] Verifying matches (attempt {attempt})")
+        log.info(f"[Gemini] Verifying matches (attempt {attempt})")
         try:
-            message = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = message.content[0].text.strip()
-            # Strip markdown code fences if Claude wraps the JSON anyway
+            response = model.generate_content(prompt)
+            raw = response.text.strip()
+            # Strip markdown code fences if Gemini wraps the JSON anyway
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
@@ -180,12 +177,12 @@ def verify_with_claude(
             verified = json.loads(raw)
             if not isinstance(verified, list):
                 raise ValueError("Expected a JSON array, got something else.")
-            log.info(f"[Claude] {len(verified)} verified match(es)")
+            log.info(f"[Gemini] {len(verified)} verified match(es)")
             return verified
         except (json.JSONDecodeError, ValueError) as exc:
-            log.error(f"[Claude] Malformed JSON on attempt {attempt}: {exc}")
+            log.error(f"[Gemini] Malformed JSON on attempt {attempt}: {exc}")
             if attempt == 2:
-                log.error("[Claude] Giving up after 2 failed attempts.")
+                log.error("[Gemini] Giving up after 2 failed attempts.")
                 return []
 
     return []  # unreachable, but satisfies type checkers
@@ -217,7 +214,7 @@ def send_email_alert(
         f"Link : {match['link']}",
         f"",
         f"Why this is a match:",
-        f"  {match.get('note', 'Verified by Claude.')}",
+        f"  {match.get('note', 'Verified by Gemini.')}",
         f"",
         f"-- Price Tracker",
     ]
@@ -266,7 +263,7 @@ def run() -> None:
     # Validate required environment variables
     missing = [
         var
-        for var in ("SERPAPI_KEY", "ANTHROPIC_API_KEY", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD")
+        for var in ("SERPAPI_KEY", "GEMINI_API_KEY", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD")
         if not os.environ.get(var)
     ]
     if missing:
@@ -281,7 +278,7 @@ def run() -> None:
         products = json.load(f)
     log.info(f"Loaded {len(products)} product(s) from {PRODUCTS_FILE}")
 
-    anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    genai.configure(api_key=GEMINI_API_KEY)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for product in products:
@@ -308,9 +305,9 @@ def run() -> None:
                 continue
 
             # Step 2: Verify
-            verified = verify_with_claude(product, results, anthropic_client)
+            verified = verify_with_gemini(product, results)
             if not verified:
-                log.warning(f"Skipping {product_name!r} — no verified matches from Claude.")
+                log.warning(f"Skipping {product_name!r} — no verified matches from Gemini.")
                 append_history(history_row)
                 continue
 

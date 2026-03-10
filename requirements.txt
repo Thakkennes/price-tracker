@@ -4,5 +4,5 @@
 # HTTP client for SerpAPI calls
 requests>=2.31,<3
 
-# Official Anthropic Python SDK (Claude API)
-anthropic>=0.26,<1
+# Google Gemini SDK (free tier available at aistudio.google.com)
+google-generativeai>=0.8,<1
