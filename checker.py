@@ -47,8 +47,8 @@ GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
 # Gemini model to use for product verification.
-# gemini-1.5-flash has a free tier quota of 1,500 requests/day.
-GEMINI_MODEL = "gemini-1.5-flash"
+# gemini-2.5-flash-lite is the recommended free-tier model as of early 2026.
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 # Number of SerpAPI results to fetch per product
 SERPAPI_NUM_RESULTS = 10
