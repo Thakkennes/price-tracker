@@ -156,6 +156,7 @@ Respond with ONLY the JSON array. No explanation, no markdown fences.
 def verify_with_gemini(
     product: dict,
     serpapi_results: list[dict],
+    client: genai.Client,
 ) -> list[dict]:
     """
     Send SerpAPI results to Gemini and return a list of verified product matches.
@@ -166,8 +167,6 @@ def verify_with_gemini(
         description=product.get("description", "No additional description provided."),
         results_json=json.dumps(serpapi_results, indent=2),
     )
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
 
     for attempt in range(1, 3):  # up to 2 attempts
         log.info(f"[Gemini] Verifying matches (attempt {attempt})")
@@ -197,12 +196,84 @@ def verify_with_gemini(
 
 
 # ---------------------------------------------------------------------------
+# Step 2b — Scrape live price from the retailer's product page
+# ---------------------------------------------------------------------------
+
+SCRAPE_PRICE_PROMPT = """\
+Below is HTML from a product page. Extract the current listed price of the product.
+Return ONLY valid JSON in this exact format:
+  {{"price": <number>}}
+or, if you cannot determine the price:
+  {{"price": null}}
+No explanation. No markdown. Just the JSON object.
+
+HTML:
+{html}
+"""
+
+# Maximum HTML characters sent to Gemini (keeps token cost low)
+SCRAPE_HTML_LIMIT = 60_000
+
+
+def scrape_price_from_page(url: str, client: genai.Client) -> float | None:
+    """
+    Fetch a retailer product page and use Gemini to extract the live price.
+    Returns a float, or None if the page cannot be fetched or parsed.
+    All errors are soft — callers should treat None as "unknown".
+    """
+    log.info(f"[Scrape] Fetching: {url}")
+    try:
+        resp = requests.get(
+            url,
+            timeout=10,
+            headers={
+                # Mimic a regular browser to reduce 403s
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        resp.raise_for_status()
+        html_snippet = resp.text[:SCRAPE_HTML_LIMIT]
+    except Exception as exc:
+        log.warning(f"[Scrape] Could not fetch page: {exc}")
+        return None
+
+    prompt = SCRAPE_PRICE_PROMPT.format(html=html_snippet)
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+        )
+        raw = response.text.strip()
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        data = json.loads(raw)
+        price = data.get("price")
+        if price is None:
+            log.info("[Scrape] Gemini could not determine price from page.")
+            return None
+        live_price = float(price)
+        log.info(f"[Scrape] Live price extracted: {live_price}")
+        return live_price
+    except Exception as exc:
+        log.warning(f"[Scrape] Failed to extract price from page: {exc}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Step 3 — Price check and email alert
 # ---------------------------------------------------------------------------
 
 def send_email_alert(
     product: dict,
     match: dict,
+    price_warning: str | None = None,
 ) -> None:
     """
     Send a Gmail alert for a product whose price dropped below the threshold.
@@ -223,6 +294,17 @@ def send_email_alert(
         f"",
         f"Why this is a match:",
         f"  {match.get('note', 'Verified by Gemini.')}",
+    ]
+
+    if price_warning:
+        body_lines += [
+            f"",
+            f"⚠ Price mismatch detected:",
+            f"  {price_warning}",
+            f"  Please verify the price on the website before purchasing.",
+        ]
+
+    body_lines += [
         f"",
         f"-- Price Tracker",
     ]
@@ -286,6 +368,7 @@ def run() -> None:
         products = json.load(f)
     log.info(f"Loaded {len(products)} product(s) from {PRODUCTS_FILE}")
 
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for product in products:
@@ -312,7 +395,7 @@ def run() -> None:
                 continue
 
             # Step 2: Verify
-            verified = verify_with_gemini(product, results)
+            verified = verify_with_gemini(product, results, gemini_client)
             if not verified:
                 log.warning(f"Skipping {product_name!r} — no verified matches from Gemini.")
                 append_history(history_row)
@@ -334,13 +417,27 @@ def run() -> None:
                 }
             )
 
+            # Step 2b: Scrape live price and check for mismatch
+            live_price = scrape_price_from_page(best["link"], gemini_client)
+            price_warning = None
+            if live_price is not None:
+                shopping_price = float(best["price"])
+                diff_pct = abs(live_price - shopping_price) / shopping_price
+                if diff_pct > 0.10:
+                    price_warning = (
+                        f"Google Shopping shows {best['currency']} {shopping_price:.2f}, "
+                        f"but the website shows {best['currency']} {live_price:.2f} "
+                        f"({diff_pct*100:.0f}% difference)."
+                    )
+                    log.warning(f"[Scrape] Price mismatch: {price_warning}")
+
             # Step 3: Alert if below threshold
             alert_sent = False
             if float(best["price"]) < float(product["threshold"]):
                 log.info(
                     f"Price {best['price']} < threshold {product['threshold']} — sending alert."
                 )
-                send_email_alert(product, best)
+                send_email_alert(product, best, price_warning=price_warning)
                 alert_sent = True
             else:
                 log.info(
