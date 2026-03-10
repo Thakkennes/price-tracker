@@ -81,6 +81,9 @@ def fetch_shopping_results(product_name: str) -> list[dict]:
     params = {
         "engine": "google_shopping",
         "q": product_name,
+        "location": "Amsterdam,North Holland,Netherlands",  # localises results to Amsterdam
+        "gl": "nl",   # country: Netherlands (affects pricing and retailer selection)
+        "hl": "en",   # response language: English (keeps parsing predictable)
         "num": SERPAPI_NUM_RESULTS,
         "api_key": SERPAPI_KEY,
     }
@@ -119,7 +122,7 @@ def fetch_shopping_results(product_name: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 VERIFICATION_PROMPT = """\
-You are a strict product matching assistant.
+You are a strict product matching assistant. The buyer is located in Amsterdam, Netherlands.
 
 I am looking for a specific product:
   Name: {name}
@@ -135,6 +138,7 @@ Your task:
    - Refurbished, used, or open-box items unless the description explicitly allows them
    - Accessories or replacement parts for the product
    - Completely unrelated products
+   - Retailers that do not ship to the Netherlands or are clearly US/UK-only with no EU presence
 3. For each confirmed match, extract the numeric price as a float (strip currency symbols).
 4. Return a JSON array of verified matches. Each element must have exactly these fields:
      title     (string)
@@ -142,7 +146,7 @@ Your task:
      currency  (string, e.g. "EUR", "USD" — infer from the price string or context)
      retailer  (string)
      link      (string)
-     note      (string — one sentence explaining why this is a valid match)
+     note      (string — one sentence explaining why this is a valid match and ships to NL)
 5. If no results match, return an empty array: []
 
 Respond with ONLY the JSON array. No explanation, no markdown fences.
