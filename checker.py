@@ -78,13 +78,18 @@ log = logging.getLogger(__name__)
 # Step 1 — Fetch prices via SerpAPI
 # ---------------------------------------------------------------------------
 
-def fetch_shopping_results(product_name: str) -> list[dict]:
+def fetch_shopping_results(product_name: str, min_price: int | None = None) -> list[dict]:
     """
     Query SerpAPI's Google Shopping endpoint for a product name.
     Returns a list of result dicts with title, price, retailer, and link.
     Raises an exception on HTTP errors; returns [] if no results found.
+
+    min_price: optional integer price floor to filter out accessories.
+    Note: sort_by and min_price conflict in SerpAPI and together return empty
+    results, so sort_by is omitted when min_price is used. Verified results
+    are already sorted by price in run() after Gemini verification.
     """
-    log.info(f"[SerpAPI] Searching for: {product_name!r}")
+    log.info(f"[SerpAPI] Searching for: {product_name!r}" + (f" (min_price: {min_price})" if min_price else ""))
 
     params = {
         "engine": "google_shopping",
@@ -92,10 +97,17 @@ def fetch_shopping_results(product_name: str) -> list[dict]:
         "location": "Amsterdam,North Holland,Netherlands",  # localises results to Amsterdam
         "gl": "nl",   # country: Netherlands (affects pricing and retailer selection)
         "hl": "en",   # response language: English (keeps parsing predictable)
-        "tbs": "p_ord:p",  # sort by price ascending — cheapest results first
         "num": SERPAPI_NUM_RESULTS,
         "api_key": SERPAPI_KEY,
     }
+
+    if min_price is not None:
+        # min_price filters accessories; sort_by conflicts with it so is omitted.
+        # Verified results are sorted cheapest-first by run() after Gemini filtering.
+        params["min_price"] = int(min_price)
+    else:
+        # No price floor set — sort by price to surface cheap results first.
+        params["sort_by"] = "1"
 
     response = requests.get(
         "https://serpapi.com/search",
@@ -446,6 +458,7 @@ def run() -> None:
 
     for product in products:
         product_name = product["name"]
+        min_price = product.get("min_price")  # optional — omit from products.json to disable
         log.info(f"--- Processing: {product_name!r} ---")
 
         # Default history row (used even on early failure)
@@ -461,7 +474,7 @@ def run() -> None:
 
         try:
             # Step 1: Fetch
-            results = fetch_shopping_results(product_name)
+            results = fetch_shopping_results(product_name, min_price)
             if not results:
                 log.warning(f"Skipping {product_name!r} — no SerpAPI results.")
                 append_history(history_row)

@@ -59,12 +59,13 @@ def main() -> None:
 
     for product in products:
         name = product["name"]
+        min_price = product.get("min_price")
         print(f"\n{'=' * 80}")
         print(f"  {name}")
         print(f"{'=' * 80}")
 
         # --- Raw SerpAPI results ---
-        results = fetch_shopping_results(name)
+        results = fetch_shopping_results(name, min_price)
         print(f"\n  Raw SerpAPI results ({len(results)} returned)\n")
         print(_header("Price", "Title", W_TITLE))
         print("  " + "-" * 76)
