@@ -4,7 +4,6 @@ on:
   # Run twice a day — 9:00 UTC and 18:00 UTC
   schedule:
     - cron: "0 9 * * *"
-    - cron: "0 18 * * *"
   # Allow manual runs from the GitHub Actions UI
   workflow_dispatch:
 

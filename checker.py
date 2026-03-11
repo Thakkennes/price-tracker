@@ -55,7 +55,7 @@ GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 # Number of SerpAPI results to fetch per product.
 # One API credit per call regardless of num, so fetching more is free.
-SERPAPI_NUM_RESULTS = 20
+SERPAPI_NUM_RESULTS = 200
 
 # How many verified matches below the threshold to include in the alert email.
 # Set to 1 for a single best result, 3 for top 3, 5 for top 5, etc.
@@ -78,18 +78,28 @@ log = logging.getLogger(__name__)
 # Step 1 — Fetch prices via SerpAPI
 # ---------------------------------------------------------------------------
 
+def _parse_price_float(price_str: str) -> float | None:
+    """Extract a numeric price from a raw SerpAPI price string (e.g. '€ 129.00' → 129.0)."""
+    match = re.search(r"[\d]+(?:[.,]\d+)*", price_str.replace(",", "."))
+    if match:
+        try:
+            return float(match.group().replace(",", "."))
+        except ValueError:
+            pass
+    return None
+
+
 def fetch_shopping_results(product_name: str, min_price: int | None = None) -> list[dict]:
     """
     Query SerpAPI's Google Shopping endpoint for a product name.
-    Returns a list of result dicts with title, price, retailer, and link.
-    Raises an exception on HTTP errors; returns [] if no results found.
-
-    min_price: optional integer price floor to filter out accessories.
-    Note: sort_by and min_price conflict in SerpAPI and together return empty
-    results, so sort_by is omitted when min_price is used. Verified results
-    are already sorted by price in run() after Gemini verification.
+    Returns a list of result dicts with title, price, retailer, and link,
+    sorted cheapest-first. Results whose parsed price is below min_price
+    are dropped client-side (SerpAPI's min_price param doesn't work for gl=nl).
     """
-    log.info(f"[SerpAPI] Searching for: {product_name!r}" + (f" (min_price: {min_price})" if min_price else ""))
+    log.info(
+        f"[SerpAPI] Searching for: {product_name!r}"
+        + (f" (min_price filter: {min_price})" if min_price else "")
+    )
 
     params = {
         "engine": "google_shopping",
@@ -98,16 +108,9 @@ def fetch_shopping_results(product_name: str, min_price: int | None = None) -> l
         "gl": "nl",   # country: Netherlands (affects pricing and retailer selection)
         "hl": "en",   # response language: English (keeps parsing predictable)
         "num": SERPAPI_NUM_RESULTS,
+        "sort_by": "1",  # price ascending — surface cheap listings first
         "api_key": SERPAPI_KEY,
     }
-
-    if min_price is not None:
-        # min_price filters accessories; sort_by conflicts with it so is omitted.
-        # Verified results are sorted cheapest-first by run() after Gemini filtering.
-        params["min_price"] = int(min_price)
-    else:
-        # No price floor set — sort by price to surface cheap results first.
-        params["sort_by"] = "1"
 
     response = requests.get(
         "https://serpapi.com/search",
@@ -119,22 +122,36 @@ def fetch_shopping_results(product_name: str, min_price: int | None = None) -> l
 
     raw_results = data.get("shopping_results", [])
     if not raw_results:
-        log.warning(f"[SerpAPI] No shopping results returned for {product_name!r}")
+        error_msg = data.get("error", "no error field")
+        top_keys = list(data.keys())
+        log.warning(
+            f"[SerpAPI] No shopping results for {product_name!r}. "
+            f"error={error_msg!r}  top-level keys={top_keys}"
+        )
         return []
 
-    # Normalise to a flat structure for the LLM
+    # Normalise and apply client-side min_price filter
     results = []
-    for item in raw_results[:SERPAPI_NUM_RESULTS]:
+    skipped = 0
+    for item in raw_results:
+        price_str = item.get("price", "")
+        if min_price is not None:
+            parsed = _parse_price_float(price_str)
+            if parsed is not None and parsed < min_price:
+                skipped += 1
+                continue
         results.append(
             {
                 "title": item.get("title", ""),
-                "price": item.get("price", ""),          # raw string, e.g. "€ 129.00"
+                "price": price_str,
                 "retailer": item.get("source", ""),
                 "link": quote(item.get("link", item.get("product_link", "")), safe=":/?=&#+%@!$'()*,;~"),
             }
         )
 
-    log.info(f"[SerpAPI] Received {len(results)} results")
+    if skipped:
+        log.info(f"[SerpAPI] Dropped {skipped} result(s) below min_price={min_price}")
+    log.info(f"[SerpAPI] {len(results)} results after client-side price filter")
     return results
 
 
