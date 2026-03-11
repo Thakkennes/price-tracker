@@ -56,6 +56,10 @@ GEMINI_MODEL = "gemini-2.5-flash-lite"
 # Number of SerpAPI results to fetch per product
 SERPAPI_NUM_RESULTS = 10
 
+# How many verified matches below the threshold to include in the alert email.
+# Set to 1 for a single best result, 3 for top 3, 5 for top 5, etc.
+TOP_RESULTS = 3
+
 # ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
@@ -333,42 +337,48 @@ def _price_from_gemini(html: str, client: genai.Client) -> float | None:
 
 def send_email_alert(
     product: dict,
-    match: dict,
-    price_warning: str | None = None,
+    matches: list[dict],
+    price_warnings: list[str | None],
 ) -> None:
     """
-    Send a Gmail alert for a product whose price dropped below the threshold.
+    Send a Gmail alert listing the top verified matches below the threshold.
+    `matches` and `price_warnings` are parallel lists, sorted cheapest-first.
     Raises smtplib.SMTPException (or similar) on failure so the caller can
     let GitHub Actions mark the run as failed.
     """
+    best = matches[0]
+    count = len(matches)
+    deals_str = f"{count} deal{'s' if count > 1 else ''} found"
+
     subject = (
-        f"Price Alert: {product['name']} now {match['currency']} {match['price']:.2f}"
+        f"Price Alert: {product['name']} — "
+        f"best price {best['currency']} {float(best['price']):.2f} ({deals_str})"
     )
 
     body_lines = [
-        f"Good news! A price alert has been triggered for one of your tracked products.",
+        f"A price alert has been triggered for one of your tracked products.",
         f"",
-        f"Product : {product['name']}",
-        f"Found price : {match['currency']} {match['price']:.2f} at {match['retailer']}",
-        f"Your threshold : {match['currency']} {product['threshold']:.2f}",
-        f"Link : {match['link']}",
+        f"Product        : {product['name']}",
+        f"Your threshold : {best['currency']} {float(product['threshold']):.2f}",
         f"",
-        f"Why this is a match:",
-        f"  {match.get('note', 'Verified by Gemini.')}",
+        f"{deals_str.capitalize()} below your threshold:",
+        f"",
     ]
 
-    if price_warning:
+    for i, (match, warning) in enumerate(zip(matches, price_warnings), start=1):
         body_lines += [
-            f"",
-            f"⚠ Price mismatch detected:",
-            f"  {price_warning}",
-            f"  Please verify the price on the website before purchasing.",
+            f"{i}. {match['currency']} {float(match['price']):.2f} at {match['retailer']}",
+            f"   Link  : {match['link']}",
+            f"   Match : {match.get('note', 'Verified by Gemini.')}",
         ]
+        if warning:
+            body_lines += [
+                f"   ⚠ Price mismatch: {warning}",
+                f"   Please verify the price on the website before purchasing.",
+            ]
+        body_lines.append("")
 
-    body_lines += [
-        f"",
-        f"-- Price Tracker",
-    ]
+    body_lines.append("-- Price Tracker")
     body = "\n".join(body_lines)
 
     msg = MIMEMultipart("alternative")
@@ -462,11 +472,21 @@ def run() -> None:
                 append_history(history_row)
                 continue
 
-            # Step 3: Find cheapest match
-            best = min(verified, key=lambda m: float(m["price"]))
+            # Step 3: Sort by price, filter below threshold, take top N
+            sorted_verified = sorted(verified, key=lambda m: float(m["price"]))
+            top_matches = [
+                m for m in sorted_verified
+                if float(m["price"]) < float(product["threshold"])
+            ][:TOP_RESULTS]
+
+            best = sorted_verified[0]  # cheapest overall, for CSV logging
             log.info(
-                f"Lowest verified price: {best['currency']} {best['price']:.2f}"
+                f"Lowest verified price: {best['currency']} {float(best['price']):.2f}"
                 f" at {best['retailer']!r}"
+            )
+            log.info(
+                f"{len(top_matches)} of {len(sorted_verified)} verified match(es) "
+                f"below threshold {product['threshold']}"
             )
 
             history_row.update(
@@ -478,27 +498,30 @@ def run() -> None:
                 }
             )
 
-            # Step 2b: Scrape live price and check for mismatch
-            live_price = scrape_price_from_page(best["link"], gemini_client)
-            price_warning = None
-            if live_price is not None:
-                shopping_price = float(best["price"])
-                diff_pct = abs(live_price - shopping_price) / shopping_price
-                if diff_pct > 0.10:
-                    price_warning = (
-                        f"Google Shopping shows {best['currency']} {shopping_price:.2f}, "
-                        f"but the website shows {best['currency']} {live_price:.2f} "
-                        f"({diff_pct*100:.0f}% difference)."
-                    )
-                    log.warning(f"[Scrape] Price mismatch: {price_warning}")
+            # Step 2b: Scrape live price for each match below threshold
+            price_warnings: list[str | None] = []
+            for match in top_matches:
+                live_price = scrape_price_from_page(match["link"], gemini_client)
+                warning = None
+                if live_price is not None:
+                    shopping_price = float(match["price"])
+                    diff_pct = abs(live_price - shopping_price) / shopping_price
+                    if diff_pct > 0.10:
+                        warning = (
+                            f"Google Shopping shows {match['currency']} {shopping_price:.2f}, "
+                            f"but the website shows {match['currency']} {live_price:.2f} "
+                            f"({diff_pct * 100:.0f}% difference)."
+                        )
+                        log.warning(f"[Scrape] Price mismatch for {match['retailer']!r}: {warning}")
+                price_warnings.append(warning)
 
-            # Step 3: Alert if below threshold
+            # Step 3: Alert if any matches are below threshold
             alert_sent = False
-            if float(best["price"]) < float(product["threshold"]):
+            if top_matches:
                 log.info(
-                    f"Price {best['price']} < threshold {product['threshold']} — sending alert."
+                    f"Sending alert with {len(top_matches)} result(s) below threshold."
                 )
-                send_email_alert(product, best, price_warning=price_warning)
+                send_email_alert(product, top_matches, price_warnings)
                 alert_sent = True
             else:
                 log.info(
