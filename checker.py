@@ -15,6 +15,7 @@ import csv
 import json
 import logging
 import os
+import re
 import smtplib
 import sys
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+from bs4 import BeautifulSoup
 from google import genai
 import requests
 
@@ -200,55 +202,113 @@ def verify_with_gemini(
 # ---------------------------------------------------------------------------
 
 SCRAPE_PRICE_PROMPT = """\
-Below is HTML from a product page. Extract the current listed price of the product.
+Below is the visible text content of a product page. Extract the current listed price.
 Return ONLY valid JSON in this exact format:
   {{"price": <number>}}
 or, if you cannot determine the price:
   {{"price": null}}
 No explanation. No markdown. Just the JSON object.
 
-HTML:
-{html}
+Page text:
+{text}
 """
 
-# Maximum HTML characters sent to Gemini (keeps token cost low)
-SCRAPE_HTML_LIMIT = 60_000
+# Maximum characters of cleaned page text sent to Gemini
+SCRAPE_TEXT_LIMIT = 8_000
+
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+}
 
 
 def scrape_price_from_page(url: str, client: genai.Client) -> float | None:
     """
-    Fetch a retailer product page and use Gemini to extract the live price.
-    Returns a float, or None if the page cannot be fetched or parsed.
+    Fetch a retailer product page and extract the live price using a layered approach:
+      1. Parse JSON-LD structured data (schema.org Product) — no AI, very reliable
+      2. Fall back to BeautifulSoup-cleaned text sent to Gemini
+    Returns a float, or None if the price cannot be determined.
     All errors are soft — callers should treat None as "unknown".
     """
     log.info(f"[Scrape] Fetching: {url}")
     try:
-        resp = requests.get(
-            url,
-            timeout=10,
-            headers={
-                # Mimic a regular browser to reduce 403s
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                )
-            },
-        )
+        resp = requests.get(url, timeout=10, headers=_BROWSER_HEADERS)
         resp.raise_for_status()
-        html_snippet = resp.text[:SCRAPE_HTML_LIMIT]
+        html = resp.text
     except Exception as exc:
         log.warning(f"[Scrape] Could not fetch page: {exc}")
         return None
 
-    prompt = SCRAPE_PRICE_PROMPT.format(html=html_snippet)
+    # Layer 1: JSON-LD structured data (schema.org Product)
+    price = _price_from_json_ld(html)
+    if price is not None:
+        log.info(f"[Scrape] Price from JSON-LD: {price}")
+        return price
+
+    # Layer 2: Strip HTML to clean text, then ask Gemini
+    log.info("[Scrape] No JSON-LD price found, falling back to Gemini on cleaned text.")
+    return _price_from_gemini(html, client)
+
+
+def _price_from_json_ld(html: str) -> float | None:
+    """
+    Parse all <script type="application/ld+json"> blocks and look for a
+    schema.org Product node with an Offer price. Returns a float or None.
+    """
+    scripts = re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html,
+        re.DOTALL | re.IGNORECASE,
+    )
+    for raw in scripts:
+        try:
+            data = json.loads(raw.strip())
+        except json.JSONDecodeError:
+            continue
+
+        # Unwrap @graph arrays
+        nodes = data.get("@graph", [data]) if isinstance(data, dict) else data
+        if not isinstance(nodes, list):
+            nodes = [nodes]
+
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            if node.get("@type") not in ("Product", "IndividualProduct"):
+                continue
+            offers = node.get("offers") or node.get("Offers")
+            if not offers:
+                continue
+            if isinstance(offers, list):
+                offers = offers[0]
+            price = offers.get("price") or offers.get("lowPrice")
+            if price is not None:
+                try:
+                    return float(price)
+                except (ValueError, TypeError):
+                    continue
+    return None
+
+
+def _price_from_gemini(html: str, client: genai.Client) -> float | None:
+    """
+    Strip a page's HTML to readable text with BeautifulSoup, then ask Gemini
+    to extract the listed price from that text.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "svg"]):
+        tag.decompose()
+    text = re.sub(r"\s+", " ", soup.get_text(separator=" ", strip=True))[:SCRAPE_TEXT_LIMIT]
+
     try:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
-            contents=prompt,
+            contents=SCRAPE_PRICE_PROMPT.format(text=text),
         )
         raw = response.text.strip()
-        # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -256,13 +316,13 @@ def scrape_price_from_page(url: str, client: genai.Client) -> float | None:
         data = json.loads(raw)
         price = data.get("price")
         if price is None:
-            log.info("[Scrape] Gemini could not determine price from page.")
+            log.info("[Scrape] Gemini could not determine price from page text.")
             return None
         live_price = float(price)
-        log.info(f"[Scrape] Live price extracted: {live_price}")
+        log.info(f"[Scrape] Price from Gemini (cleaned text): {live_price}")
         return live_price
     except Exception as exc:
-        log.warning(f"[Scrape] Failed to extract price from page: {exc}")
+        log.warning(f"[Scrape] Gemini extraction failed: {exc}")
         return None
 
 

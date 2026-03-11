@@ -6,3 +6,6 @@ requests>=2.31,<3
 
 # Google Gemini SDK — new unified SDK (free tier at aistudio.google.com)
 google-genai>=1.0,<2
+
+# HTML parsing for price scraping fallback
+beautifulsoup4>=4.12,<5
