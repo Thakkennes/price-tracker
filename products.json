@@ -2,7 +2,7 @@
   {
     "name": "Eureka Mignon Specialita",
     "description": "Eureka Mignon Specialita espresso grinder, new (not refurbished or used). Accepts both the standard Specialita and the Specialita Silent Range (Silent or Silent Range suffix). Excludes other Eureka Mignon models such as the Filtro, Perfetto, Libra, or Oro. Excludes bundles with accessories.",
-    "threshold": 400,
+    "threshold": 350,
     "min_price": 200,
     "currency": "EUR",
     "alert_email": "thakkennes@gmail.com",
