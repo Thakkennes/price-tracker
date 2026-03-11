@@ -87,13 +87,31 @@ Edit `products.json` and add a new object to the array:
 
 ### Fields
 
-| Field          | Required | Description |
-|----------------|----------|-------------|
-| `name`         | Yes      | Product name used as the search query. Be specific. |
-| `description`  | Yes      | **Fill this in carefully.** Gemini uses this to decide what counts as a genuine match. Be explicit about what to exclude (refurbished, bundles, accessories, wrong model variants). The more detail here, the fewer false alerts you get. |
-| `threshold`    | Yes      | Alert is sent when the price drops below this number. |
-| `currency`     | Yes      | Informational — used in email alerts and CSV logs. |
-| `alert_email`  | Yes      | Email address to notify when the threshold is crossed. |
+| Field                | Required | Description |
+|----------------------|----------|-------------|
+| `name`               | Yes      | Product name used as the search query. Be specific. |
+| `description`        | Yes      | **Fill this in carefully.** Gemini uses this to decide what counts as a genuine match. Be explicit about what to exclude (refurbished, bundles, accessories, wrong model variants). The more detail here, the fewer false alerts you get. |
+| `threshold`          | Yes      | Alert is sent when the price drops below this number. |
+| `currency`           | Yes      | Informational — used in email alerts and CSV logs. |
+| `alert_email`        | Yes      | Email address to notify when the threshold is crossed. |
+| `excluded_retailers` | No       | List of retailer names to permanently skip. See below. |
+
+---
+
+## Dismissing a result
+
+If you receive an alert and check the listing manually (e.g. the price is wrong, it won't ship to you, or the stock is gone), you can stop that retailer from appearing in future alerts.
+
+1. Open `products.json`
+2. Add the retailer name **exactly as it appears** in the alert email or `price_history.csv` to the `excluded_retailers` list:
+
+```json
+"excluded_retailers": ["Espresso Coffee Shop"]
+```
+
+3. Commit and push the change — the retailer will be skipped in all future runs for that product.
+
+To re-enable it later, simply remove the name from the list.
 
 ---
 

@@ -58,7 +58,7 @@ SERPAPI_NUM_RESULTS = 10
 
 # How many verified matches below the threshold to include in the alert email.
 # Set to 1 for a single best result, 3 for top 3, 5 for top 5, etc.
-TOP_RESULTS = 3
+TOP_RESULTS = 5
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -469,6 +469,17 @@ def run() -> None:
             verified = verify_with_gemini(product, results, gemini_client)
             if not verified:
                 log.warning(f"Skipping {product_name!r} — no verified matches from Gemini.")
+                append_history(history_row)
+                continue
+
+            # Step 2c: Filter out manually excluded retailers
+            excluded = {r.lower() for r in product.get("excluded_retailers", [])}
+            if excluded:
+                before = len(verified)
+                verified = [m for m in verified if m["retailer"].lower() not in excluded]
+                log.info(f"[Filter] Excluded {before - len(verified)} result(s) by retailer.")
+            if not verified:
+                log.warning(f"Skipping {product_name!r} — all matches excluded by retailer filter.")
                 append_history(history_row)
                 continue
 
