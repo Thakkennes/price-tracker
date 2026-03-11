@@ -53,8 +53,9 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 # gemini-2.5-flash-lite is the recommended free-tier model as of early 2026.
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 
-# Number of SerpAPI results to fetch per product
-SERPAPI_NUM_RESULTS = 10
+# Number of SerpAPI results to fetch per product.
+# One API credit per call regardless of num, so fetching more is free.
+SERPAPI_NUM_RESULTS = 20
 
 # How many verified matches below the threshold to include in the alert email.
 # Set to 1 for a single best result, 3 for top 3, 5 for top 5, etc.
@@ -91,6 +92,7 @@ def fetch_shopping_results(product_name: str) -> list[dict]:
         "location": "Amsterdam,North Holland,Netherlands",  # localises results to Amsterdam
         "gl": "nl",   # country: Netherlands (affects pricing and retailer selection)
         "hl": "en",   # response language: English (keeps parsing predictable)
+        "tbs": "p_ord:p",  # sort by price ascending — cheapest results first
         "num": SERPAPI_NUM_RESULTS,
         "api_key": SERPAPI_KEY,
     }
