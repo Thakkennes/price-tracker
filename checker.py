@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 from google import genai
@@ -111,7 +112,7 @@ def fetch_shopping_results(product_name: str) -> list[dict]:
                 "title": item.get("title", ""),
                 "price": item.get("price", ""),          # raw string, e.g. "€ 129.00"
                 "retailer": item.get("source", ""),
-                "link": item.get("link", item.get("product_link", "")),
+                "link": quote(item.get("link", item.get("product_link", "")), safe=":/?=&#+%@!$'()*,;~"),
             }
         )
 
