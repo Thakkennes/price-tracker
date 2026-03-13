@@ -6,6 +6,6 @@
     "min_price": 200,
     "currency": "EUR",
     "alert_email": "thakkennes@gmail.com",
-    "excluded_retailers": ["Espresso Coffee Shop"]
+    "excluded_retailers": ["Espresso Coffee Shop","captncoffee"]
   }
 ]
