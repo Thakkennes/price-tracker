@@ -26,3 +26,4 @@ timestamp,product_name,lowest_verified_price,currency,retailer,link,alert_sent
 2026-03-20T09:50:09Z,Eureka Mignon Specialita,,EUR,,,False
 2026-03-21T09:37:17Z,Eureka Mignon Specialita,,EUR,,,False
 2026-03-21T09:37:17Z,Eureka Mignon Specialita,,EUR,,,False
+2026-03-22T09:38:20Z,Eureka Mignon Specialita,349.0,EUR,coffeefriend.nl,"https://www.google.com/search?ibp=oshop&q=Eureka%20Mignon%20Specialita&prds=catalogid:11978258955518544554,headlineOfferDocid:15513345247052008163,imageDocid:4744651617374817372,rds:PC_2595388442952320215%7CPROD_PC_2595388442952320215,gpcid:2595388442952320215,pvt:hg&hl=en&gl=nl&udm=28",True
