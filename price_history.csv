@@ -137,3 +137,4 @@ timestamp,product_name,lowest_verified_price,currency,retailer,link,alert_sent
 2026-07-02T11:37:01Z,Eureka Mignon Specialita,,EUR,,,False
 2026-07-03T11:35:43Z,Eureka Mignon Specialita,,EUR,,,False
 2026-07-04T10:56:03Z,Eureka Mignon Specialita,,EUR,,,False
+2026-07-05T11:06:37Z,Eureka Mignon Specialita,237.0,EUR,Espresso Werkplaats,"https://www.google.com/search?ibp=oshop&q=Eureka%20Mignon%20Specialita&prds=catalogid:14752652204371840083,productid:14893614240636526131,headlineOfferDocid:6075823587031722150,imageDocid:8275878982037477021,rds:PC_8645366392100759112%7CPROD_PC_8645366392100759112,gpcid:8645366392100759112,mid:576462886934267138,pvt:hg&hl=en&gl=nl&udm=28",True
